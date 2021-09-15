@@ -7,9 +7,9 @@ namespace Nico\SlimRateMiddleware\Middleware;
 use Nico\SlimRateMiddleware\Client\RedisClientInterface;
 use Nico\SlimRateMiddleware\DTO\Config;
 use Nico\SlimRateMiddleware\Exception\CouldNotResolveRouteException;
-use Nico\SlimRateMiddleware\Exception\InvalidArgumentException;
-use Nico\SlimRateMiddleware\Exception\RateMiddlewareException;
-use Nico\SlimRateMiddleware\Service\ResolverRegister;
+use Nico\SlimRateMiddleware\Exception\ResolverNotFoundException;
+use Nico\SlimRateMiddleware\Exception\UnableToResolveIdentifierException;
+use Nico\SlimRateMiddleware\Service\IdentifierResolverRegistry;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Slim\Route;
@@ -19,7 +19,7 @@ class AppRateLimitMiddleware
     private const KEY_PREFIX = 'rate_middleware:%s_%s';
 
     private RedisClientInterface $redisClient;
-    private ResolverRegister $resolverRegister;
+    private IdentifierResolverRegistry $identifierResolverRegistry;
 
     /**
      * @var callable
@@ -27,30 +27,30 @@ class AppRateLimitMiddleware
     private $handler;
 
     /**
-     * @var mixed[]
+     * @var Config[]
      */
     private array $configs;
 
     public function __construct(
         RedisClientInterface $redisClient,
-        ResolverRegister $resolverRegister,
+        IdentifierResolverRegistry $identifierResolverRegistry,
         array $configs,
         callable $handler
     ) {
         $this->redisClient = $redisClient;
-        $this->resolverRegister = $resolverRegister;
+        $this->identifierResolverRegistry = $identifierResolverRegistry;
         $this->handler = $handler;
         $this->configs = $configs;
-
-        $this->validateConfigs();
     }
 
     /**
      * @param ServerRequestInterface $request
      * @param ResponseInterface $response
      * @param callable $next
-     * @return mixed
-     * @throws RateMiddlewareException
+     * @return false|mixed
+     * @throws CouldNotResolveRouteException
+     * @throws ResolverNotFoundException
+     * @throws UnableToResolveIdentifierException
      */
     public function __invoke(ServerRequestInterface $request, ResponseInterface $response, callable $next)
     {
@@ -62,8 +62,8 @@ class AppRateLimitMiddleware
                 continue;
             }
 
-            $identifier = $this->getIdentifier($config, $request);
-            $count = $this->getCount($identifier);
+            $cacheKey = $this->getCacheKey($routeName, $this->getRequesterIdentifier($config, $request));
+            $count = $this->getCount($cacheKey);
 
             ++$count;
 
@@ -71,47 +71,17 @@ class AppRateLimitMiddleware
                 return call_user_func($this->handler, $request, $response);
             }
 
-            $this->saveCount($config, $identifier, $count);
+            $this->saveCount($config, $cacheKey, $count);
         }
 
         return $next($request, $response);
     }
 
-    private function getCount(string $identifier): int
-    {
-        return (int)$this->redisClient->get($this->getKey($identifier));
-    }
-
-    private function getKey(string $routeName, string $identifierKey): string
-    {
-        return sprintf(self::KEY_PREFIX, $routeName, $identifierKey);
-    }
-
-    private function getIdentifier(Config $config, ServerRequestInterface $request): string
-    {
-        return $this->resolverRegister->getResolver($config->getIdentifier())->get($request);
-    }
-
-    private function saveCount(Config $config, string $identifier, int $count): void
-    {
-        $ttl = $this->redisClient->ttl($identifier);
-
-        if (in_array($ttl, [0, -1, -2])) {
-            $ttl = $config->getTime();
-        }
-
-        $this->redisClient->set($this->getKey($identifier), $count, $ttl);
-    }
-
-    private function validateConfigs(): void
-    {
-        foreach ($this->configs as $config) {
-            if (!is_array($config)) {
-                throw new InvalidArgumentException('Config must be multidimensional');
-            }
-        }
-    }
-
+    /**
+     * @param ServerRequestInterface $request
+     * @return string
+     * @throws CouldNotResolveRouteException
+     */
     private function getRouteName(ServerRequestInterface $request): string
     {
         $route = $request->getAttribute('route');
@@ -121,5 +91,38 @@ class AppRateLimitMiddleware
         }
 
         throw new CouldNotResolveRouteException();
+    }
+
+    private function getCount(string $cacheKey): int
+    {
+        return (int)$this->redisClient->get($cacheKey);
+    }
+
+    private function getCacheKey(string $routeName, string $requestIdentifier): string
+    {
+        return sprintf(self::KEY_PREFIX, $routeName, $requestIdentifier);
+    }
+
+    /**
+     * @param Config $config
+     * @param ServerRequestInterface $request
+     * @return string
+     * @throws ResolverNotFoundException
+     * @throws UnableToResolveIdentifierException
+     */
+    private function getRequesterIdentifier(Config $config, ServerRequestInterface $request): string
+    {
+        return $this->identifierResolverRegistry->getResolver($config->getIdentifier())->get($request);
+    }
+
+    private function saveCount(Config $config, string $cacheKey, int $count): void
+    {
+        $ttl = $this->redisClient->ttl($cacheKey);
+
+        if (in_array($ttl, [0, -1, -2], true)) {
+            $ttl = $config->getTime();
+        }
+
+        $this->redisClient->set($cacheKey, $count, $ttl);
     }
 }

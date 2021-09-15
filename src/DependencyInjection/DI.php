@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace Nico\SlimRateMiddleware\DI;
+namespace Nico\SlimRateMiddleware\DependencyInjection;
 
 use Nico\SlimRateMiddleware\Service\Handler\LimitHandler;
 use Nico\SlimRateMiddleware\Service\Resolver\IpResolver;
-use Nico\SlimRateMiddleware\Service\ResolverRegister;
+use Nico\SlimRateMiddleware\Service\IdentifierResolverRegistry;
 use Slim\Container;
 
 class DI
@@ -19,10 +19,10 @@ class DI
 
     protected function registerResolvers(Container $container): void
     {
-        $resolverRegistry = new ResolverRegister();
-        $resolverRegistry->addResolver(IpResolver::IDENTIFIER_IP, new IpResolver());
+        $identifierResolverRegistry = new IdentifierResolverRegistry();
+        $identifierResolverRegistry->addResolver(IpResolver::IDENTIFIER_IP, new IpResolver());
 
-        $container[ResolverRegister::class] = $resolverRegistry;
+        $container[IdentifierResolverRegistry::class] = $identifierResolverRegistry;
     }
 
     protected function registerHandler(Container $container): void

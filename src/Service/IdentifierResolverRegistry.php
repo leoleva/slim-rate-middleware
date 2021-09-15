@@ -7,7 +7,7 @@ namespace Nico\SlimRateMiddleware\Service;
 use Nico\SlimRateMiddleware\Service\Resolver\ResolverInterface;
 use Nico\SlimRateMiddleware\Exception\ResolverNotFoundException;
 
-class ResolverRegister
+class IdentifierResolverRegistry
 {
     /**
      * @var ResolverInterface[]
